@@ -287,7 +287,13 @@ def pull_all(cache: bool = True) -> pd.DataFrame:
     """
     prices_wide = fetch_prices(cache=cache)
     prices_long = prices_to_long(prices_wide)
-    fred_df = fetch_fred(cache=cache)
+    try:
+        fred_df = fetch_fred(cache=cache)
+    except Exception as exc:
+        print(f"[data_pull] FRED download failed ({exc}); proceeding without FRED macro series.")
+        fallback_dates = prices_long.index.get_level_values("date").unique().sort_values()
+        fred_df = pd.DataFrame(index=fallback_dates)
+        fred_df.index.name = "date"
 
     try:
         ff_df = fetch_fama_french(cache=cache)

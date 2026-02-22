@@ -1,21 +1,15 @@
 """
-Data page — summary statistics and feature correlations.
-
-Entirely static: computed once from the cached feature matrix.
-Helps users understand the raw data before interpreting model outputs.
+Data page for summary statistics and feature correlations.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import pandas as pd
+import streamlit as st
 
 st.set_page_config(page_title="Data", page_icon="📋", layout="wide")
 st.title("📋 Data Explorer")
 
-# ---------------------------------------------------------------------------
-# Load cached feature matrix
-# ---------------------------------------------------------------------------
 CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
 FEATURES_PATH = CACHE_DIR / "feature_matrix.parquet"
 
@@ -27,25 +21,22 @@ def load_features():
     return None
 
 
-df = load_features()
-
+df = st.session_state.get("feature_matrix")
 if df is None:
+    df = load_features()
+
+if df is None or df.empty:
     st.warning(
-        "No cached feature matrix found. "
-        "Run the notebook first, then copy `feature_matrix.parquet` to `app/cache/`."
+        "No feature matrix found. Run one or more models in 'model lab' "
+        "or upload app/cache/feature_matrix.parquet."
     )
     st.stop()
 
-# ---------------------------------------------------------------------------
-# Summary statistics
-# ---------------------------------------------------------------------------
 st.subheader("Summary Statistics")
 
-# Pick numeric feature columns only
-feature_cols = [c for c in df.columns if df[c].dtype in ("float64", "float32", "int64")]
-
-stats = df[feature_cols].describe().T
-stats["missing_%"] = (df[feature_cols].isna().sum() / len(df) * 100).round(1)
+numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+stats = df[numeric_cols].describe().T
+stats["missing_%"] = (df[numeric_cols].isna().sum() / len(df) * 100).round(1)
 
 st.dataframe(
     stats[["count", "mean", "std", "min", "25%", "50%", "75%", "max", "missing_%"]]
@@ -53,35 +44,27 @@ st.dataframe(
     use_container_width=True,
 )
 
-# ---------------------------------------------------------------------------
-# Correlation heatmap
-# ---------------------------------------------------------------------------
 st.subheader("Feature Correlations")
-
-# Let user select which features to include
 from src.features import FEATURE_COLUMNS
 
 available_features = [c for c in FEATURE_COLUMNS if c in df.columns]
 selected = st.multiselect(
     "Select features for correlation matrix",
     options=available_features,
-    default=available_features[:10],
+    default=available_features[: min(10, len(available_features))],
 )
 
 if len(selected) >= 2:
     try:
         from src.plots import plot_correlation_heatmap
+
         fig = plot_correlation_heatmap(df.reset_index(drop=True), columns=selected)
         st.pyplot(fig)
     except Exception:
-        corr = df[selected].corr()
-        st.dataframe(corr.style.format("{:.2f}"), use_container_width=True)
+        st.dataframe(df[selected].corr().style.format("{:.2f}"), use_container_width=True)
 else:
     st.info("Select at least 2 features to display the correlation matrix.")
 
-# ---------------------------------------------------------------------------
-# Ticker filter
-# ---------------------------------------------------------------------------
 st.subheader("Per-Ticker View")
 
 if "ticker" in df.index.names:
@@ -98,7 +81,7 @@ if tickers:
     else:
         ticker_data = df[df["ticker"] == sel_ticker]
 
-    st.write(f"**{sel_ticker}** — {len(ticker_data)} observations")
+    st.write(f"**{sel_ticker}** - {len(ticker_data)} observations")
     st.dataframe(
         ticker_data[available_features].describe().T.style.format("{:.2f}"),
         use_container_width=True,

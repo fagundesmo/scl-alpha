@@ -106,6 +106,7 @@ def run_backtest(
     retrain_every: int = RETRAIN_EVERY_WEEKS,
     initial_train_years: int = INITIAL_TRAIN_YEARS,
     tickers: list[str] | None = None,
+    model_params: dict | None = None,
 ) -> pd.DataFrame:
     """
     Run the full walk-forward backtest.
@@ -125,6 +126,8 @@ def run_backtest(
         Retrain the model every N rebalance dates.
     initial_train_years : int
         Minimum years of data before first prediction.
+    model_params : dict | None
+        Optional model-specific parameter overrides passed to make_model().
 
     Returns
     -------
@@ -171,7 +174,7 @@ def run_backtest(
             X_train = train_data[feature_cols]
             y_train = train_data["target_ret_5d_fwd"]
 
-            model = make_model(model_name)
+            model = make_model(model_name, params=model_params)
             model = train_model(model, X_train, y_train)
             print(f"  [backtest] Retrained {model_name} at {sig_date.date()} "
                   f"(train size: {len(X_train)})")

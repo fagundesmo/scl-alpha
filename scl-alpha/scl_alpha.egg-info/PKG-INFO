@@ -1,0 +1,88 @@
+Metadata-Version: 2.4
+Name: scl-alpha
+Version: 0.1.0
+Summary: ML-driven quantitative trading research for supply-chain and logistics stocks.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy<3.0.0,>=2.0.0
+Requires-Dist: pandas<3.0.0,>=2.1.0
+Requires-Dist: scipy>=1.14.0
+Requires-Dist: scikit-learn>=1.5.0
+Requires-Dist: xgboost>=2.0.0
+Requires-Dist: yfinance>=0.2.36
+Requires-Dist: fredapi>=0.5.1
+Requires-Dist: pandas-datareader>=0.10.0
+Requires-Dist: joblib>=1.3.0
+Requires-Dist: pyarrow>=14.0.0
+Requires-Dist: matplotlib>=3.8.0
+Requires-Dist: seaborn>=0.13.0
+Requires-Dist: plotly>=5.18.0
+Requires-Dist: streamlit>=1.35.0
+Requires-Dist: python-dotenv>=1.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4.0; extra == "dev"
+
+# scl-alpha
+
+Portable ML-driven quantitative trading research project for supply-chain and logistics equities.
+
+## Python requirement
+
+- Python `3.11+` is required.
+- The project uses modern type syntax (for example `list[str] | None`) and dependency versions targeted at Python 3.11.
+
+## Clean machine quickstart
+
+```bash
+cd /path/to/scl-alpha
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install .
+```
+
+Install dev/test tooling:
+
+```bash
+pip install .[dev]
+```
+
+## Environment setup
+
+```bash
+cp .env.example .env
+```
+
+Set your FRED key in `.env`:
+
+```env
+FRED_API_KEY=your_fred_api_key
+```
+
+If `FRED_API_KEY` is missing, FRED-backed pulls fail with a clear error. Fama-French download is best-effort and network-dependent.
+
+## Run app
+
+```bash
+streamlit run app/app.py
+```
+
+## Run tests
+
+```bash
+pytest -q
+```
+
+## Packaging and install
+
+- First-class install path: `pip install .`
+- Dev extras: `pip install .[dev]`
+- Package namespace stays `src`, so imports like `from src.backtest import run_backtest` continue to work.
+
+## Dependency sync rule
+
+- Runtime dependencies are declared in both:
+  - `pyproject.toml` (`[project.dependencies]`)
+  - `requirements.txt` (deployment/runtime)
+- Keep them synchronized whenever dependencies are changed.
+- Test-only tooling belongs in `pyproject.toml` extras (`[project.optional-dependencies].dev`).

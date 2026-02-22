@@ -125,10 +125,23 @@ def fetch_fred(
 
     fred = Fred(api_key=FRED_API_KEY)
     frames: dict[str, pd.Series] = {}
+    skipped: list[str] = []
     for sid, label in series.items():
         print(f"[data_pull] Fetching FRED series {sid} ({label}) ...")
-        s = fred.get_series(sid, observation_start=start, observation_end=end)
-        frames[sid] = s
+        try:
+            s = fred.get_series(sid, observation_start=start, observation_end=end)
+            frames[sid] = s
+        except Exception as exc:
+            skipped.append(sid)
+            print(f"[data_pull] WARNING: skipping series {sid} ({label}) due to: {exc}")
+
+    if not frames:
+        raise ValueError(
+            "No FRED series could be downloaded. Verify your FRED_API_KEY and series IDs."
+        )
+
+    if skipped:
+        print(f"[data_pull] Loaded {len(frames)} series; skipped {len(skipped)} unavailable series: {skipped}")
 
     df = pd.DataFrame(frames)
     df.index.name = "date"
@@ -274,7 +287,13 @@ def pull_all(cache: bool = True) -> pd.DataFrame:
     """
     prices_wide = fetch_prices(cache=cache)
     prices_long = prices_to_long(prices_wide)
-    fred_df = fetch_fred(cache=cache)
+    try:
+        fred_df = fetch_fred(cache=cache)
+    except Exception as exc:
+        print(f"[data_pull] FRED download failed ({exc}); proceeding without FRED macro series.")
+        fallback_dates = prices_long.index.get_level_values("date").unique().sort_values()
+        fred_df = pd.DataFrame(index=fallback_dates)
+        fred_df.index.name = "date"
 
     try:
         ff_df = fetch_fama_french(cache=cache)

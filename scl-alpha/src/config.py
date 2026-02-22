@@ -100,7 +100,6 @@ REBALANCE_DAY = "Friday"      # Signal day; trade on next Monday open
 FRED_SERIES = {
     "VIXCLS":  "VIX close",
     "GASDESW": "US diesel price ($/gal, weekly)",
-    "NAPM":    "ISM Manufacturing PMI (monthly)",
     "DGS10":   "10-Year Treasury yield (daily)",
     "ICNSA":   "Initial jobless claims (weekly)",
 }

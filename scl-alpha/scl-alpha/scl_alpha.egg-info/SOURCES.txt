@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+scl_alpha.egg-info/PKG-INFO
+scl_alpha.egg-info/SOURCES.txt
+scl_alpha.egg-info/dependency_links.txt
+scl_alpha.egg-info/requires.txt
+scl_alpha.egg-info/top_level.txt
+src/__init__.py
+src/backtest.py
+src/config.py
+src/data_pull.py
+src/features.py
+src/metrics.py
+src/model.py
+src/plots.py
+tests/test_backtest.py
+tests/test_features.py

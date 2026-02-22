@@ -129,16 +129,36 @@ def train_model(
     return model
 
 
-def predict(model: Pipeline, X: pd.DataFrame) -> np.ndarray:
+def predict(
+    model: Pipeline,
+    X: pd.DataFrame,
+    feature_cols: list[str] | None = None,
+) -> np.ndarray:
     """
     Generate predictions from a fitted pipeline.
+
+    Parameters
+    ----------
+    model : Pipeline
+        Fitted sklearn pipeline.
+    X : pd.DataFrame
+        Feature frame.
+    feature_cols : list[str] | None
+        Optional explicit feature column order used by the model.
 
     Returns
     -------
     np.ndarray
-        Predicted 5-day forward returns (%).
+        Predicted forward returns (%).
     """
-    feature_cols = [c for c in FEATURE_COLUMNS if c in X.columns]
+    if feature_cols is None:
+        feature_cols = [c for c in FEATURE_COLUMNS if c in X.columns]
+    else:
+        feature_cols = [c for c in feature_cols if c in X.columns]
+
+    if not feature_cols:
+        raise ValueError("No usable feature columns available for prediction.")
+
     return model.predict(X[feature_cols].values)
 
 

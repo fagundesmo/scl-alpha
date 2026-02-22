@@ -36,6 +36,7 @@ logistics companies.
 
 Use the sidebar to navigate between pages:
 
+- **Model Lab** - Choose one or more models, tune parameters, run backtests, and compare results.
 - **Signals** - View this week's model predictions and rankings.
 - **Backtest** - Explore historical strategy performance vs. benchmarks.
 - **Explain** - See which features drove a specific prediction.

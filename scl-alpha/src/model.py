@@ -19,8 +19,11 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
 from src.config import (
-    RIDGE_ALPHA, RF_PARAMS, XGB_PARAMS,
-    MODELS_DIR, RANDOM_SEED,
+    RIDGE_ALPHA,
+    RF_PARAMS,
+    XGB_PARAMS,
+    MODELS_DIR,
+    RANDOM_SEED,
 )
 from src.features import FEATURE_COLUMNS  # single source of truth
 
@@ -29,7 +32,7 @@ from src.features import FEATURE_COLUMNS  # single source of truth
 # Model factory
 # ---------------------------------------------------------------------------
 
-def make_model(name: str) -> Pipeline:
+def make_model(name: str, params: dict | None = None) -> Pipeline:
     """
     Create a sklearn Pipeline with StandardScaler + regressor.
 
@@ -37,6 +40,8 @@ def make_model(name: str) -> Pipeline:
     ----------
     name : str
         One of 'ridge', 'rf', 'xgboost'.
+    params : dict | None
+        Optional model-specific parameter overrides.
 
     Returns
     -------
@@ -46,15 +51,20 @@ def make_model(name: str) -> Pipeline:
     Notes
     -----
     The scaler is fit INSIDE the pipeline, which means it only ever sees
-    training data — preventing data leakage.
+    training data, preventing data leakage.
     """
     name = name.lower().strip()
+    params = params or {}
 
     if name == "ridge":
-        reg = Ridge(alpha=RIDGE_ALPHA, random_state=RANDOM_SEED)
+        ridge_params = {"alpha": RIDGE_ALPHA, "random_state": RANDOM_SEED}
+        ridge_params.update(params)
+        reg = Ridge(**ridge_params)
 
     elif name == "rf":
-        reg = RandomForestRegressor(**RF_PARAMS)
+        rf_params = dict(RF_PARAMS)
+        rf_params.update(params)
+        reg = RandomForestRegressor(**rf_params)
 
     elif name == "xgboost":
         try:
@@ -64,9 +74,11 @@ def make_model(name: str) -> Pipeline:
                 "xgboost is required for model_name='xgboost'. It is included in the default "
                 "project dependencies; reinstall with `pip install .` or `pip install -r requirements.txt`."
             ) from exc
-        # Remove early_stopping_rounds from constructor; handled in fit()
-        params = {k: v for k, v in XGB_PARAMS.items() if k != "early_stopping_rounds"}
-        reg = XGBRegressor(**params)
+
+        xgb_params = dict(XGB_PARAMS)
+        xgb_params.update(params)
+        xgb_params.pop("early_stopping_rounds", None)
+        reg = XGBRegressor(**xgb_params)
 
     else:
         raise ValueError(f"Unknown model name: {name!r}.  Choose 'ridge', 'rf', or 'xgboost'.")
@@ -101,23 +113,16 @@ def train_model(
     regressor_name = type(model.named_steps["regressor"]).__name__
 
     if regressor_name == "XGBRegressor" and X_val is not None and y_val is not None:
-        # XGBoost early stopping: scale training and validation data using the
-        # pipeline's StandardScaler, then fit the regressor directly.
-        # fit_transform on the scaler ensures it's marked as fitted so that
-        # subsequent model.predict() calls work correctly through the pipeline.
         scaler = model.named_steps["scaler"]
         X_scaled = scaler.fit_transform(X)
         X_val_scaled = scaler.transform(X_val[feature_cols].values)
 
         model.named_steps["regressor"].fit(
-            X_scaled, y,
+            X_scaled,
+            y,
             eval_set=[(X_val_scaled, y_val.values)],
             verbose=False,
         )
-        # At this point the pipeline is fully fitted:
-        # - scaler was fitted via fit_transform above
-        # - regressor was fitted directly with early stopping
-        # model.predict() will correctly apply the fitted scaler then regressor.
     else:
         model.fit(X, y)
 

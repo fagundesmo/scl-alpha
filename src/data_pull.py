@@ -125,10 +125,23 @@ def fetch_fred(
 
     fred = Fred(api_key=FRED_API_KEY)
     frames: dict[str, pd.Series] = {}
+    skipped: list[str] = []
     for sid, label in series.items():
         print(f"[data_pull] Fetching FRED series {sid} ({label}) ...")
-        s = fred.get_series(sid, observation_start=start, observation_end=end)
-        frames[sid] = s
+        try:
+            s = fred.get_series(sid, observation_start=start, observation_end=end)
+            frames[sid] = s
+        except Exception as exc:
+            skipped.append(sid)
+            print(f"[data_pull] WARNING: skipping series {sid} ({label}) due to: {exc}")
+
+    if not frames:
+        raise ValueError(
+            "No FRED series could be downloaded. Verify your FRED_API_KEY and series IDs."
+        )
+
+    if skipped:
+        print(f"[data_pull] Loaded {len(frames)} series; skipped {len(skipped)} unavailable series: {skipped}")
 
     df = pd.DataFrame(frames)
     df.index.name = "date"

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scl-alpha"
+version = "0.1.0"
+description = "ML-driven quantitative trading research for supply-chain and logistics stocks."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0.0,<3.0.0",
+  "pandas>=2.1.0,<3.0.0",
+  "scipy>=1.14.0",
+  "scikit-learn>=1.5.0",
+  "xgboost>=2.0.0",
+  "yfinance>=0.2.36",
+  "fredapi>=0.5.1",
+  "pandas-datareader>=0.10.0",
+  "joblib>=1.3.0",
+  "pyarrow>=14.0.0",
+  "matplotlib>=3.8.0",
+  "seaborn>=0.13.0",
+  "plotly>=5.18.0",
+  "streamlit>=1.35.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src", "src.*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

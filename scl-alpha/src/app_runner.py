@@ -10,6 +10,7 @@ import time
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import TimeSeriesSplit
 
 from src.backtest import buy_and_hold_baseline, run_backtest
 from src.config import TICKERS
@@ -21,6 +22,7 @@ from src.model import get_feature_importance, make_model, predict, train_model
 MIN_FEATURE_NON_NULL_RATIO = 0.05
 MIN_FEATURE_COUNT = 4
 MIN_TRAIN_ROWS = 100
+MIN_FOLD_ROWS = 60
 
 
 def load_feature_matrix(refresh_data: bool = False) -> pd.DataFrame:
@@ -84,6 +86,28 @@ def _trainable_data(df: pd.DataFrame, tickers: list[str]) -> tuple[pd.DataFrame,
     return trainable.sort_index(), usable_cols, prepared.sort_index()
 
 
+def _maybe_sample_trainable(
+    trainable: pd.DataFrame,
+    sample_fraction: float,
+    max_rows_per_ticker: int = 220,
+) -> pd.DataFrame:
+    """Sample the most recent rows per ticker for faster parameter search."""
+    sample_fraction = float(sample_fraction)
+    if sample_fraction >= 0.999:
+        return trainable
+
+    groups = []
+    for _, grp in trainable.groupby(level="ticker"):
+        desired_n = max(int(len(grp) * sample_fraction), 80)
+        keep_n = min(desired_n, max_rows_per_ticker)
+        groups.append(grp.tail(keep_n))
+
+    sampled = pd.concat(groups).sort_index()
+    if len(sampled) < MIN_TRAIN_ROWS:
+        return trainable
+    return sampled
+
+
 def _latest_snapshot(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     dates = df.index.get_level_values("date").unique().sort_values(ascending=False)
     for dt in dates:
@@ -101,6 +125,78 @@ def _split_train_test(data: pd.DataFrame, test_fraction: float = 0.2) -> tuple[p
     split_idx = max(split_idx, 1)
     split_idx = min(split_idx, len(data) - 1)
     return data.iloc[:split_idx], data.iloc[split_idx:]
+
+
+def score_model_params(
+    feature_df: pd.DataFrame,
+    model_name: str,
+    model_params: dict,
+    tickers: list[str] | None = None,
+    sample_fraction: float = 0.35,
+    cv_splits: int = 3,
+    max_rows_per_ticker: int = 220,
+) -> dict:
+    """
+    Fast CV-based ML-only evaluation used during grid search (no backtest).
+    """
+    tickers = tickers or TICKERS
+    trainable, feature_cols, _prepared_df = _trainable_data(feature_df, tickers)
+    search_df = _maybe_sample_trainable(
+        trainable,
+        sample_fraction=sample_fraction,
+        max_rows_per_ticker=max_rows_per_ticker,
+    )
+
+    cv_splits = max(2, int(cv_splits))
+    max_allowed_splits = max(2, len(search_df) // MIN_FOLD_ROWS)
+    cv_splits = min(cv_splits, max_allowed_splits)
+
+    fold_metrics: list[dict] = []
+    if cv_splits >= 2:
+        splitter = TimeSeriesSplit(n_splits=cv_splits)
+        for train_idx, test_idx in splitter.split(search_df):
+            train_data = search_df.iloc[train_idx]
+            test_data = search_df.iloc[test_idx]
+            if len(train_data) < MIN_TRAIN_ROWS or len(test_data) < MIN_FOLD_ROWS:
+                continue
+
+            model_eval = make_model(model_name, params=model_params)
+            model_eval = train_model(
+                model_eval,
+                train_data[feature_cols],
+                train_data["target_ret_5d_fwd"],
+                X_val=test_data[feature_cols],
+                y_val=test_data["target_ret_5d_fwd"],
+            )
+            y_pred = predict(model_eval, test_data[feature_cols], feature_cols=feature_cols)
+            fold_metrics.append(compute_ml_metrics(test_data["target_ret_5d_fwd"].values, y_pred))
+
+    if not fold_metrics:
+        train_data, test_data = _split_train_test(search_df)
+        model_eval = make_model(model_name, params=model_params)
+        model_eval = train_model(
+            model_eval,
+            train_data[feature_cols],
+            train_data["target_ret_5d_fwd"],
+            X_val=test_data[feature_cols],
+            y_val=test_data["target_ret_5d_fwd"],
+        )
+        y_pred = predict(model_eval, test_data[feature_cols], feature_cols=feature_cols)
+        fold_metrics.append(compute_ml_metrics(test_data["target_ret_5d_fwd"].values, y_pred))
+
+    ml_metrics = (
+        pd.DataFrame(fold_metrics)
+        .replace([np.inf, -np.inf], np.nan)
+        .mean(numeric_only=True)
+        .to_dict()
+    )
+
+    return {
+        "ml_metrics": ml_metrics,
+        "feature_cols": feature_cols,
+        "n_rows": len(search_df),
+        "cv_splits": len(fold_metrics),
+    }
 
 
 def run_single_model(
@@ -127,7 +223,7 @@ def run_single_model(
     y_test = test_data["target_ret_5d_fwd"]
 
     model_eval = make_model(model_name, params=model_params)
-    model_eval = train_model(model_eval, X_train, y_train)
+    model_eval = train_model(model_eval, X_train, y_train, X_val=X_test, y_val=y_test)
     y_pred = predict(model_eval, X_test, feature_cols=feature_cols)
     ml_metrics = compute_ml_metrics(y_test.values, y_pred)
 

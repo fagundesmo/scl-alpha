@@ -342,6 +342,7 @@ with st.expander("Model parameters", expanded=True):
             max_value=6,
             value=3,
             help="How many tree-count values to test.",
+            key="rf_trees_points",
         )
 
         rfd1, rfd2, rfd3 = st.columns(3)
@@ -365,6 +366,7 @@ with st.expander("Model parameters", expanded=True):
             max_value=6,
             value=3,
             help="How many depth values to test.",
+            key="rf_depth_points",
         )
 
         rfl1, rfl2, rfl3 = st.columns(3)
@@ -439,6 +441,7 @@ with st.expander("Model parameters", expanded=True):
             max_value=6,
             value=3,
             help="How many tree-count values to test.",
+            key="xgb_trees_points",
         )
 
         xd1, xd2, xd3 = st.columns(3)
@@ -462,6 +465,7 @@ with st.expander("Model parameters", expanded=True):
             max_value=6,
             value=3,
             help="How many depth values to test.",
+            key="xgb_depth_points",
         )
 
         xl1, xl2, xl3 = st.columns(3)

@@ -172,12 +172,15 @@ def run_single_model(
         benchmark = pd.DataFrame(columns=["cumulative_return"])
     else:
         trading_metrics = compute_trading_metrics(backtest_df)
-        benchmark = buy_and_hold_baseline(
-            prepared_df,
-            ticker="IYT",
-            start=backtest_df.index.min(),
-            end=backtest_df.index.max(),
-        )
+        try:
+            benchmark = buy_and_hold_baseline(
+                feature_df,
+                ticker="IYT",
+                start=backtest_df.index.min(),
+                end=backtest_df.index.max(),
+            )
+        except KeyError:
+            benchmark = pd.DataFrame(columns=["cumulative_return"])
 
     elapsed = time.time() - start_ts
 

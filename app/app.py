@@ -1,12 +1,4 @@
-"""
-Streamlit app entrypoint for scl-alpha.
-
-Run with:
-    streamlit run app/app.py
-
-Or via Procfile on Railway:
-    web: streamlit run app/app.py --server.port $PORT --server.address 0.0.0.0
-"""
+"""Home page for scl-alpha."""
 
 import sys
 
@@ -23,11 +15,7 @@ import yfinance as yf
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_latest_prices(symbols: tuple[str, ...]) -> tuple[str | None, dict[str, float], dict[str, float | None], str | None]:
-    """
-    Load latest daily close prices and 1-day change for sidebar display.
-
-    Refreshes hourly to keep values current without over-requesting API data.
-    """
+    """Load latest daily close prices and 1-day change for display."""
     try:
         df = yf.download(
             list(symbols),
@@ -79,11 +67,7 @@ def load_latest_prices(symbols: tuple[str, ...]) -> tuple[str | None, dict[str, 
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_analyst_consensus(symbols: tuple[str, ...]) -> dict[str, str]:
-    """
-    Load analyst consensus per ticker (Strong Buy/Buy/Hold/Sell/Strong Sell).
-
-    Refreshes daily.
-    """
+    """Load analyst consensus per ticker (Strong Buy/Buy/Hold/Sell/Strong Sell)."""
     out: dict[str, str] = {}
     for symbol in symbols:
         try:
@@ -104,11 +88,7 @@ def load_analyst_consensus(symbols: tuple[str, ...]) -> dict[str, str]:
             }
 
             total = sum(counts.values())
-            if total <= 0:
-                out[symbol] = "n/a"
-            else:
-                out[symbol] = max(counts, key=counts.get)
-
+            out[symbol] = max(counts, key=counts.get) if total > 0 else "n/a"
         except Exception:
             out[symbol] = "n/a"
 
@@ -116,51 +96,63 @@ def load_analyst_consensus(symbols: tuple[str, ...]) -> dict[str, str]:
 
 
 st.set_page_config(
-    page_title="SCL-Alpha - ML Trading Signals",
-    page_icon="📦",
+    page_title="Home - SCL-Alpha",
+    page_icon="🏠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+tickers = ["UPS", "FDX", "XPO", "CHRW", "JBHT", "UNP", "CSX", "MATX", "GXO", "EXPD"]
+as_of, prices, changes, price_error = load_latest_prices(tuple(tickers))
+analyst_consensus = load_analyst_consensus(tuple(tickers))
+
 st.title("SCL-Alpha: ML-Driven Supply-Chain Trading Signals")
 
-st.markdown("""
-Welcome to **SCL-Alpha**, a sandbox project that applies machine learning
-to quantitative trading research for publicly traded supply-chain and
-logistics companies.
+st.subheader("Tracked Companies")
+cols = st.columns(5)
+for i, t in enumerate(tickers):
+    p = prices.get(t)
+    chg = changes.get(t)
+    rec = analyst_consensus.get(t, "n/a")
 
-### How to use this app
+    if p is None or pd.isna(p):
+        price_text = "n/a"
+    elif chg is None or pd.isna(chg):
+        price_text = f"${p:,.2f}"
+    else:
+        price_text = f"${p:,.2f} ({chg:+.2f}%)"
 
-Use the sidebar to navigate between pages:
+    cols[i % 5].markdown(
+        f"**{t}**  \n"
+        f"Price: {price_text}  \n"
+        f"Analyst: {rec}"
+    )
 
-- **Model Lab** - Choose one or more models, tune parameters, run backtests, and compare results.
-- **Signals** - View this week's model predictions and rankings.
-- **Backtest** - Explore historical strategy performance vs. benchmarks.
-- **Explain** - See which features drove a specific prediction.
-- **Data** - Browse summary statistics and feature correlations.
+left, center, right = st.columns([1, 2, 1])
+with center:
+    st.markdown("### How to Use the App")
+    st.markdown(
+        "1. Open **Model Lab** to select one or more models.\n"
+        "2. Set portfolio settings and model parameters (single values or ranges).\n"
+        "3. Click **Run selected models** and compare results.\n"
+        "4. Publish your preferred model to use it in **Signals**, **Backtest**, **Explain**, and **Data** pages."
+    )
 
----
-
-*This is a research prototype for educational purposes.
-It is not investment advice.*
-""")
+st.markdown("---")
+st.caption(
+    "This is a research prototype for educational purposes. It is not investment advice."
+)
 
 # Sidebar info
 st.sidebar.markdown("### About")
 st.sidebar.markdown(
     "**scl-alpha** v0.1.0\n\n"
     "ML-driven trading research for\n"
-    "supply-chain & logistics stocks.\n\n"
-    "[GitHub Repo](#) · [Blueprint](#)"
+    "supply-chain & logistics stocks."
 )
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Ticker Universe")
-tickers = ["UPS", "FDX", "XPO", "CHRW", "JBHT", "UNP", "CSX", "MATX", "GXO", "EXPD"]
-
-as_of, prices, changes, price_error = load_latest_prices(tuple(tickers))
-analyst_consensus = load_analyst_consensus(tuple(tickers))
-
 for t in tickers:
     p = prices.get(t)
     rec = analyst_consensus.get(t, "n/a")

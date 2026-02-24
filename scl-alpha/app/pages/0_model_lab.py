@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from src.app_runner import (
+    build_daily_run_outputs,
     load_feature_matrix,
     persist_run_outputs,
     run_single_model,
@@ -148,6 +149,14 @@ def _params_table(model_name: str, params: dict) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _render_table(df: pd.DataFrame, formats: dict | None = None, hide_index: bool = True) -> None:
+    if isinstance(df, pd.DataFrame) and not df.empty:
+        style = df.style.format(formats or {}) if formats else df
+        st.dataframe(style, use_container_width=True, hide_index=hide_index)
+    else:
+        st.info("No data available for this section yet.")
 
 
 st.set_page_config(page_title="Model Lab", page_icon="🧪", layout="wide")
@@ -677,6 +686,7 @@ if st.button("Run selected models", type="primary", use_container_width=True):
                         run["search_sample_fraction"] = grid_sample_fraction
                         run["search_rows_per_ticker"] = grid_rows_per_ticker
                         run["search_preset"] = preset_name if range_mode else "single"
+                        run["completed_utc"] = pd.Timestamp.utcnow().strftime("%Y-%m-%d %H:%M:%S")
                         runs[model_name] = run
                     except Exception as exc:
                         errors[model_name] = str(exc)
@@ -804,6 +814,116 @@ c1.metric("CAGR", f"{trade['CAGR']:.1%}" if pd.notna(trade["CAGR"]) else "n/a")
 c2.metric("Sharpe", f"{trade['Sharpe Ratio']:.2f}" if pd.notna(trade["Sharpe Ratio"]) else "n/a")
 c3.metric("Max drawdown", f"{trade['Max Drawdown']:.1%}" if pd.notna(trade["Max Drawdown"]) else "n/a")
 c4.metric("Profit factor", f"{trade['Profit Factor']:.2f}" if pd.notna(trade["Profit Factor"]) else "n/a")
+
+st.subheader("Daily trading run outputs")
+st.caption(
+    "Operational diagnostics for daily workflow: signals, orders, risk, costs, constraints, data quality, and system health."
+)
+daily_outputs = build_daily_run_outputs(
+    run=run,
+    feature_matrix=feature_matrix if isinstance(feature_matrix, pd.DataFrame) else pd.DataFrame(),
+    top_k=top_k,
+    cost_bps=cost_bps,
+    slippage_bps=slippage_bps,
+    tickers=TICKERS,
+)
+
+tab_signal, tab_orders, tab_exec, tab_pos, tab_pnl, tab_cost, tab_risk, tab_constraints, tab_data, tab_model, tab_system = st.tabs(
+    [
+        "Signal summary",
+        "Orders generated",
+        "Executed trades",
+        "Positions & exposure",
+        "P&L attribution",
+        "Transaction costs",
+        "Risk metrics",
+        "Constraint checks",
+        "Data quality",
+        "Model health",
+        "System health",
+    ]
+)
+
+with tab_signal:
+    _render_table(daily_outputs.get("signal_summary", pd.DataFrame()), {"Predicted Return (%)": "{:.2f}"})
+
+with tab_orders:
+    st.caption("Generated from latest signal vs prior holdings (pre-trade allocation plan).")
+    _render_table(
+        daily_outputs.get("orders_generated", pd.DataFrame()),
+        {
+            "Current Weight": "{:.1%}",
+            "Target Weight": "{:.1%}",
+            "Weight Change": "{:+.1%}",
+            "Signal Score (%)": "{:.2f}",
+            "Reference Price": "{:.2f}",
+            "Estimated Cost (bps)": "{:.2f}",
+            "Estimated Cost (%)": "{:.4f}",
+        },
+    )
+
+with tab_exec:
+    st.caption("Execution log is simulated using latest reference prices (no broker integration yet).")
+    _render_table(
+        daily_outputs.get("executed_trades", pd.DataFrame()),
+        {
+            "Current Weight": "{:.1%}",
+            "Target Weight": "{:.1%}",
+            "Weight Change": "{:+.1%}",
+            "Fill Price": "{:.2f}",
+            "Estimated Cost (bps)": "{:.2f}",
+            "Estimated Cost (%)": "{:.4f}",
+        },
+    )
+
+with tab_pos:
+    st.markdown("**Current target positions**")
+    _render_table(
+        daily_outputs.get("positions_exposure", pd.DataFrame()),
+        {"Weight": "{:.1%}", "Predicted Return (%)": "{:.2f}", "Last Price": "{:.2f}"},
+    )
+    st.markdown("**Exposure summary**")
+    _render_table(
+        daily_outputs.get("exposure_summary", pd.DataFrame()),
+        {
+            "Value": "{:.4f}",
+        },
+    )
+
+with tab_pnl:
+    _render_table(
+        daily_outputs.get("pnl_attribution", pd.DataFrame()),
+        {"Last period (%)": "{:.2f}", "Cumulative (%)": "{:.2f}"},
+    )
+
+with tab_cost:
+    st.markdown("**Cost summary**")
+    _render_table(daily_outputs.get("transaction_costs_summary", pd.DataFrame()), {"Value": "{:.4f}"})
+    st.markdown("**Recent cost detail**")
+    _render_table(
+        daily_outputs.get("transaction_costs_detail", pd.DataFrame()),
+        {
+            "Turnover": "{:.1%}",
+            "Total Cost (%)": "{:.4f}",
+            "Commission (%)": "{:.4f}",
+            "Slippage (%)": "{:.4f}",
+        },
+    )
+
+with tab_risk:
+    _render_table(daily_outputs.get("risk_metrics", pd.DataFrame()), {"Value": "{:.4f}"})
+
+with tab_constraints:
+    _render_table(daily_outputs.get("constraint_checks", pd.DataFrame()))
+
+with tab_data:
+    _render_table(daily_outputs.get("data_quality_checks", pd.DataFrame()))
+
+with tab_model:
+    _render_table(daily_outputs.get("model_health", pd.DataFrame()), {"Value": "{:.4f}"})
+
+with tab_system:
+    _render_table(daily_outputs.get("system_health", pd.DataFrame()))
 
 st.subheader("Latest predicted returns")
 st.dataframe(

@@ -10,6 +10,11 @@ navigation = st.navigation(
     [
         st.Page(str(ROOT / "app" / "app.py"), title="Home", icon="🏠"),
         st.Page(str(ROOT / "app" / "pages" / "0_model_lab.py"), title="Model Lab", icon="🧪"),
+        st.Page(
+            str(ROOT / "app" / "pages" / "5_full_scl_alpha_model.py"),
+            title="Full SCL-alpha model",
+            icon="🧾",
+        ),
         st.Page(str(ROOT / "app" / "pages" / "1_signals.py"), title="Signals", icon="📊"),
         st.Page(str(ROOT / "app" / "pages" / "2_backtest.py"), title="Backtest", icon="📈"),
         st.Page(str(ROOT / "app" / "pages" / "3_explain.py"), title="Explain", icon="🔍"),

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import inspect
 import time
 
 import numpy as np
@@ -266,13 +267,13 @@ def fit_xgboost_model(
 ) -> dict[str, Any]:
     """Fit XGBoost model and return model + split predictions + runtime.
 
-    If xgboost is unavailable, raises ImportError so caller can mark model FAIL
-    while keeping the other model outputs.
+    Handles API differences across xgboost versions by only sending supported
+    fit kwargs, and falling back to constructor-level params when needed.
     """
     try:
         from xgboost import XGBRegressor
     except Exception as exc:  # pragma: no cover - environment-dependent
-        raise ImportError("xgboost is not installed.") from exc
+        raise ImportError(f"xgboost is unavailable in this environment: {exc}") from exc
 
     x_tr = _to_frame(X_train, feature_names)
     x_va = _to_frame(X_val, feature_names)
@@ -293,14 +294,45 @@ def fit_xgboost_model(
         random_state=int(random_state),
     )
 
-    fit_kwargs: dict[str, Any] = {"verbose": False}
-    if len(x_va) > 0 and len(y_va) > 0:
-        fit_kwargs["eval_set"] = [(x_tr, y_tr), (x_va, y_va)]
-        fit_kwargs["eval_metric"] = "rmse"
-        if early_stopping_rounds is not None:
-            fit_kwargs["early_stopping_rounds"] = int(early_stopping_rounds)
+    fit_signature = inspect.signature(model.fit)
+    fit_params = set(fit_signature.parameters.keys())
+    has_val = len(x_va) > 0 and len(y_va) > 0
 
-    model.fit(x_tr, y_tr, **fit_kwargs)
+    fit_kwargs: dict[str, Any] = {}
+    if "verbose" in fit_params:
+        fit_kwargs["verbose"] = False
+
+    if has_val and "eval_set" in fit_params:
+        fit_kwargs["eval_set"] = [(x_tr, y_tr), (x_va, y_va)]
+
+    if "eval_metric" in fit_params:
+        fit_kwargs["eval_metric"] = "rmse"
+    else:
+        try:
+            model.set_params(eval_metric="rmse")
+        except Exception:
+            pass
+
+    if early_stopping_rounds is not None and has_val:
+        if "early_stopping_rounds" in fit_params:
+            fit_kwargs["early_stopping_rounds"] = int(early_stopping_rounds)
+        else:
+            try:
+                model.set_params(early_stopping_rounds=int(early_stopping_rounds))
+            except Exception:
+                pass
+
+    try:
+        model.fit(x_tr, y_tr, **fit_kwargs)
+    except TypeError as exc:
+        # Last-resort fallback for unexpected kwargs in mixed environments.
+        msg = str(exc)
+        fallback_kwargs = dict(fit_kwargs)
+        for key in ("eval_metric", "early_stopping_rounds", "verbose"):
+            if key in msg and key in fallback_kwargs:
+                fallback_kwargs.pop(key, None)
+        model.fit(x_tr, y_tr, **fallback_kwargs)
+
     runtime = time.perf_counter() - start
 
     evals_result = None
@@ -318,7 +350,6 @@ def fit_xgboost_model(
         "runtime_seconds": runtime,
         "evals_result": evals_result,
     }
-
 
 def compute_common_predictions_table(
     model_name: str,
@@ -1169,8 +1200,9 @@ def build_full_comparison_report(
     rf_params: dict[str, Any] | None = None,
     xgb_params: dict[str, Any] | None = None,
     include_shap: bool = True,
+    selected_models: list[str] | None = None,
 ) -> dict[str, dict[str, pd.DataFrame]]:
-    """Run all three models and return nested standardized report outputs."""
+    """Run selected models and return nested standardized report outputs."""
     ridge_params = ridge_params or {}
     rf_params = rf_params or {}
     xgb_params = xgb_params or {}
@@ -1190,13 +1222,30 @@ def build_full_comparison_report(
     reports: dict[str, dict[str, pd.DataFrame]] = {}
     comparison_rows: list[dict[str, Any]] = []
 
-    model_plan = [
-        ("ridge", "Ridge Regression", "coefficients"),
-        ("random_forest", "Random Forest Regressor", "feature_importance"),
-        ("xgboost", "XGBoost Regressor", "SHAP/feature_importance"),
-    ]
+    model_specs = {
+        "ridge": ("Ridge Regression", "coefficients"),
+        "random_forest": ("Random Forest Regressor", "feature_importance"),
+        "xgboost": ("XGBoost Regressor", "SHAP/feature_importance"),
+    }
+    default_order = ["ridge", "random_forest", "xgboost"]
 
-    for model_key, model_label, explain in model_plan:
+    if selected_models is None:
+        model_order = default_order
+    else:
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for raw in selected_models:
+            key = str(raw).strip().lower()
+            if key in model_specs and key not in seen:
+                normalized.append(key)
+                seen.add(key)
+        model_order = normalized
+
+    if not model_order:
+        raise ValueError("selected_models must include at least one of ridge/random_forest/xgboost")
+
+    for model_key in model_order:
+        model_label, explain = model_specs[model_key]
         try:
             if model_key == "ridge":
                 fit = fit_ridge_model(
@@ -1337,7 +1386,6 @@ def build_full_comparison_report(
 
     reports["comparison"] = {"model_comparison": model_comparison}
     return reports
-
 
 def export_reports_to_csv(
     reports: dict[str, dict[str, pd.DataFrame]],

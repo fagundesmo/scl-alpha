@@ -22,6 +22,12 @@ from src.full_scl_alpha_model import (
 
 TARGET_COL = "predicted_return_5d"
 
+MODEL_OPTIONS = {
+    "ridge": "Ridge Regression",
+    "random_forest": "Random Forest",
+    "xgboost": "XGBoost",
+}
+
 
 def _prepare_real_dataset(feature_matrix: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """Build a clean learning dataset from project features for the same ticker universe."""
@@ -100,21 +106,23 @@ def _show_with_download(
 
 def _markdown_cell(source: str) -> dict:
     """Build a Jupyter markdown cell payload."""
+    normalized = source.replace("\\n", "\n")
     return {
         "cell_type": "markdown",
         "metadata": {},
-        "source": [line + "\\n" for line in source.strip().splitlines()],
+        "source": [line + "\n" for line in normalized.strip().splitlines()],
     }
 
 
 def _code_cell(source: str) -> dict:
     """Build a Jupyter code cell payload."""
+    normalized = source.replace("\\n", "\n")
     return {
         "cell_type": "code",
         "execution_count": None,
         "metadata": {},
         "outputs": [],
-        "source": [line + "\\n" for line in source.strip().splitlines()],
+        "source": [line + "\n" for line in normalized.strip().splitlines()],
     }
 
 
@@ -128,15 +136,17 @@ def _build_notebook_bytes(config: dict) -> bytes:
         f"TRANSACTION_COST_BPS = {float(config['transaction_cost_bps'])!r}\\n"
         f"INCLUDE_SHAP = {bool(config['include_shap'])!r}\\n"
         f"EXPORT_CSV = {bool(config['export_csv'])!r}\\n"
-        f"OUTPUT_DIR = {config['output_dir']!r}\\n\\n"
+        f"OUTPUT_DIR = {config['output_dir']!r}\\n"
+        f"SELECTED_MODELS = {config['selected_models']!r}\\n\\n"
         f"RIDGE_PARAMS = {{'alpha': {float(config['ridge_alpha'])!r}}}\\n"
         "RF_PARAMS = {\\n"
         f"    'n_estimators': {int(config['rf_n_estimators'])!r},\\n"
         f"    'max_depth': {int(config['rf_max_depth'])!r},\\n"
+        f"    'min_samples_split': {int(config['rf_min_split'])!r},\\n"
         f"    'min_samples_leaf': {int(config['rf_min_leaf'])!r},\\n"
         f"    'max_features': {config['rf_max_features']!r},\\n"
-        "    'bootstrap': True,\\n"
-        "    'oob_score_enabled': True,\\n"
+        f"    'bootstrap': {bool(config['rf_bootstrap'])!r},\\n"
+        f"    'oob_score_enabled': {bool(config['rf_oob'])!r},\\n"
         "    'random_state': 42,\\n"
         "}\\n"
         "XGB_PARAMS = {\\n"
@@ -147,6 +157,7 @@ def _build_notebook_bytes(config: dict) -> bytes:
         f"    'colsample_bytree': {float(config['xgb_colsample'])!r},\\n"
         f"    'reg_alpha': {float(config['xgb_reg_alpha'])!r},\\n"
         f"    'reg_lambda': {float(config['xgb_reg_lambda'])!r},\\n"
+        f"    'objective': {config['xgb_objective']!r},\\n"
         "    'random_state': 42,\\n"
         f"    'early_stopping_rounds': {int(config['xgb_early_stopping'])!r},\\n"
         "}"
@@ -230,6 +241,7 @@ def _build_notebook_bytes(config: dict) -> bytes:
                 "    rf_params=RF_PARAMS,\\n"
                 "    xgb_params=XGB_PARAMS,\\n"
                 "    include_shap=INCLUDE_SHAP,\\n"
+                "    selected_models=SELECTED_MODELS,\\n"
                 ")\\n\\n"
                 "comparison = report['comparison']['model_comparison']\\n"
                 "comparison"
@@ -321,15 +333,22 @@ with st.expander("Data & run settings", expanded=True):
         help="Folder where exported CSV tables will be saved.",
     )
 
+    selected_models = st.multiselect(
+        "Models to run",
+        options=list(MODEL_OPTIONS.keys()),
+        default=list(MODEL_OPTIONS.keys()),
+        format_func=lambda key: MODEL_OPTIONS.get(key, key),
+        help="Choose one or more models for this run.",
+    )
+
 with st.expander("Model parameters", expanded=True):
     st.markdown("#### Ridge")
-    ridge_alpha = st.number_input(
+    ridge_alpha = st.slider(
         "Alpha",
         min_value=0.001,
         max_value=100.0,
         value=float(RIDGE_ALPHA),
-        step=0.1,
-        format="%.3f",
+        step=0.001,
         help="L2 regularization strength.",
     )
 
@@ -350,18 +369,38 @@ with st.expander("Model parameters", expanded=True):
         value=int(RF_PARAMS.get("max_depth", 8)),
         help="Maximum depth of trees.",
     )
-    rf_min_leaf = rf3.slider(
+    rf_min_split = rf3.slider(
+        "Min split size",
+        min_value=2,
+        max_value=50,
+        value=int(RF_PARAMS.get("min_samples_split", 2)),
+        help="Minimum samples required to split an internal node.",
+    )
+    rf_min_leaf = rf4.slider(
         "Min leaf size",
         min_value=1,
         max_value=50,
         value=int(RF_PARAMS.get("min_samples_leaf", 5)),
         help="Minimum samples per leaf.",
     )
-    rf_max_features = rf4.selectbox(
+
+    rf5, rf6, rf7 = st.columns(3)
+    rf_max_features = rf5.selectbox(
         "Max features",
         options=["sqrt", "log2", "None"],
         index=0,
         help="Feature sampling strategy per split.",
+    )
+    rf_bootstrap = rf6.checkbox(
+        "Bootstrap samples",
+        value=bool(RF_PARAMS.get("bootstrap", True)),
+        help="Sample training rows with replacement for each tree.",
+    )
+    rf_oob = rf7.checkbox(
+        "Use OOB score",
+        value=bool(RF_PARAMS.get("oob_score", True)),
+        disabled=not rf_bootstrap,
+        help="Out-of-bag score is only available when bootstrap is enabled.",
     )
 
     st.markdown("#### XGBoost")
@@ -381,13 +420,12 @@ with st.expander("Model parameters", expanded=True):
         value=int(XGB_PARAMS.get("max_depth", 4)),
         help="Maximum tree depth per boosting round.",
     )
-    xgb_learning_rate = x3.number_input(
+    xgb_learning_rate = x3.slider(
         "Learning rate",
         min_value=0.01,
         max_value=0.5,
         value=float(XGB_PARAMS.get("learning_rate", 0.05)),
         step=0.01,
-        format="%.2f",
         help="Smaller values are usually more stable.",
     )
     xgb_early_stopping = x4.slider(
@@ -413,24 +451,38 @@ with st.expander("Model parameters", expanded=True):
         value=float(XGB_PARAMS.get("colsample_bytree", 0.9)),
         step=0.05,
     )
-    xgb_reg_alpha = x7.number_input(
+    xgb_reg_alpha = x7.slider(
         "Reg alpha",
         min_value=0.0,
         max_value=10.0,
-        value=0.0,
+        value=float(XGB_PARAMS.get("reg_alpha", 0.0)),
         step=0.1,
     )
-    xgb_reg_lambda = x8.number_input(
+    xgb_reg_lambda = x8.slider(
         "Reg lambda",
         min_value=0.0,
         max_value=20.0,
-        value=1.0,
+        value=float(XGB_PARAMS.get("reg_lambda", 1.0)),
         step=0.1,
+    )
+
+    xgb_objective_options = ["reg:squarederror", "reg:absoluteerror", "reg:pseudohubererror"]
+    xgb_objective_default = str(XGB_PARAMS.get("objective", "reg:squarederror"))
+    xgb_objective = st.selectbox(
+        "Objective",
+        options=xgb_objective_options,
+        index=xgb_objective_options.index(xgb_objective_default)
+        if xgb_objective_default in xgb_objective_options
+        else 0,
+        help="Loss function for regression training.",
     )
 
 if st.button("Run Full SCL-alpha model", type="primary", use_container_width=True):
     if val_fraction + test_fraction >= 0.8:
         st.error("Validation + test fractions must be less than 0.8.")
+        st.stop()
+    if not selected_models:
+        st.error("Select at least one model to run.")
         st.stop()
 
     with st.spinner("Preparing dataset and generating standardized model reports..."):
@@ -474,10 +526,11 @@ if st.button("Run Full SCL-alpha model", type="primary", use_container_width=Tru
                 rf_params={
                     "n_estimators": int(rf_n_estimators),
                     "max_depth": int(rf_max_depth),
+                    "min_samples_split": int(rf_min_split),
                     "min_samples_leaf": int(rf_min_leaf),
                     "max_features": None if rf_max_features == "None" else rf_max_features,
-                    "bootstrap": True,
-                    "oob_score_enabled": True,
+                    "bootstrap": bool(rf_bootstrap),
+                    "oob_score_enabled": bool(rf_oob and rf_bootstrap),
                     "random_state": 42,
                 },
                 xgb_params={
@@ -488,15 +541,18 @@ if st.button("Run Full SCL-alpha model", type="primary", use_container_width=Tru
                     "colsample_bytree": float(xgb_colsample),
                     "reg_alpha": float(xgb_reg_alpha),
                     "reg_lambda": float(xgb_reg_lambda),
+                    "objective": xgb_objective,
                     "random_state": 42,
                     "early_stopping_rounds": int(xgb_early_stopping),
                 },
                 include_shap=bool(include_shap),
+                selected_models=list(selected_models),
             )
 
             st.session_state["full_scl_alpha_report"] = report
             st.session_state["full_scl_alpha_source"] = source_note
             st.session_state["full_scl_alpha_feature_count"] = len(feature_cols)
+            st.session_state["full_scl_alpha_selected_models"] = list(selected_models)
 
             if export_csv:
                 written = export_reports_to_csv(report, output_root=output_dir)
@@ -542,11 +598,15 @@ notebook_config = {
     "include_shap": bool(include_shap),
     "export_csv": bool(export_csv),
     "output_dir": output_dir,
+    "selected_models": list(selected_models),
     "ridge_alpha": float(ridge_alpha),
     "rf_n_estimators": int(rf_n_estimators),
     "rf_max_depth": int(rf_max_depth),
+    "rf_min_split": int(rf_min_split),
     "rf_min_leaf": int(rf_min_leaf),
     "rf_max_features": None if rf_max_features == "None" else rf_max_features,
+    "rf_bootstrap": bool(rf_bootstrap),
+    "rf_oob": bool(rf_oob and rf_bootstrap),
     "xgb_n_estimators": int(xgb_n_estimators),
     "xgb_max_depth": int(xgb_max_depth),
     "xgb_learning_rate": float(xgb_learning_rate),
@@ -555,6 +615,7 @@ notebook_config = {
     "xgb_colsample": float(xgb_colsample),
     "xgb_reg_alpha": float(xgb_reg_alpha),
     "xgb_reg_lambda": float(xgb_reg_lambda),
+    "xgb_objective": xgb_objective,
 }
 
 with st.expander("Notebook export", expanded=False):

@@ -132,10 +132,10 @@ left, center, right = st.columns([1, 2, 1])
 with center:
     st.markdown("### How to Use the App")
     st.markdown(
-        "1. Open **Model Lab** to select one or more models.\n"
-        "2. Set portfolio settings and model parameters (single values or ranges).\n"
-        "3. Click **Run selected models** and compare results.\n"
-        "4. Publish your preferred model to use it in **Signals**, **Backtest**, **Explain**, and **Data** pages."
+        "1. Go to **Pre-data** and run the three pipeline steps: download raw data, align, and build features.\n"
+        "2. Visit **Output** to explore all data and feature plots.\n"
+        "3. Open **Sandbox Models** to train Ridge, Random Forest, and XGBoost on the feature matrix and compare results.\n\n"
+        "_Target variable: `target_fwd_1d` — next-day log return for each supply-chain company._"
     )
 
 st.markdown("---")

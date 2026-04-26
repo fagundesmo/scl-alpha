@@ -3,12 +3,14 @@ Data collection module.
 
 Pulls OHLCV data from Yahoo Finance and macro series from FRED via
 direct CSV download (no API key required). Results are cached as parquet
-files in data/raw/ so APIs are only hit once (or when refresh=True).
+files in data/raw/ and automatically refreshed each calendar day.
 """
 
 from __future__ import annotations
 
+import time
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
@@ -26,6 +28,14 @@ from src.config import (
 
 def _yesterday() -> str:
     return (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _cache_stale(path: Path) -> bool:
+    """Return True if the file doesn't exist or was last modified before today."""
+    if not path.exists():
+        return True
+    mtime_date = date.fromtimestamp(path.stat().st_mtime)
+    return mtime_date < date.today()
 
 
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -58,7 +68,7 @@ def fetch_company_ohlcv(
     end = end or _yesterday()
     cache_path = DATA_RAW / "companies_ohlcv.parquet"
 
-    if cache and cache_path.exists():
+    if cache and not _cache_stale(cache_path):
         print("[data_pull] Loading cached company OHLCV")
         return pd.read_parquet(cache_path)
 
@@ -77,10 +87,8 @@ def fetch_company_ohlcv(
         fields = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
         lvl0 = set(raw.columns.get_level_values(0))
         if lvl0 & fields:
-            # columns are (Field, Ticker)
             df = raw.stack(1).rename_axis(["Date", "Ticker"]).reset_index()
         else:
-            # columns are (Ticker, Field)
             df = raw.stack(0).rename_axis(["Date", "Ticker"]).reset_index()
     else:
         df = raw.reset_index()
@@ -121,7 +129,7 @@ def fetch_etf_ohlcv(
     end = end or _yesterday()
     cache_path = DATA_RAW / f"{symbol.lower()}_ohlcv.parquet"
 
-    if cache and cache_path.exists():
+    if cache and not _cache_stale(cache_path):
         return pd.read_parquet(cache_path)
 
     print(f"[data_pull] Downloading OHLCV for {symbol} ...")
@@ -158,7 +166,7 @@ def fetch_vix(
     end = end or _yesterday()
     cache_path = DATA_RAW / "vix_close.parquet"
 
-    if cache and cache_path.exists():
+    if cache and not _cache_stale(cache_path):
         s = pd.read_parquet(cache_path).iloc[:, 0]
         s.name = "VIX"
         return s
@@ -193,7 +201,7 @@ def fetch_fred(
     cache: bool = True,
 ) -> pd.DataFrame:
     """
-    Download macro series from FRED via pandas-datareader (no API key needed).
+    Download macro series from FRED via public CSV endpoint (no API key needed).
 
     Returns
     -------
@@ -205,7 +213,7 @@ def fetch_fred(
     end = end or date.today().strftime("%Y-%m-%d")
     cache_path = DATA_RAW / "fred.parquet"
 
-    if cache and cache_path.exists():
+    if cache and not _cache_stale(cache_path):
         print("[data_pull] Loading cached FRED data")
         return pd.read_parquet(cache_path)
 
@@ -244,7 +252,7 @@ def pull_all(cache: bool = True, refresh: bool = False) -> dict:
     Parameters
     ----------
     cache : bool
-        Use cached parquet files when they exist.
+        Use cached parquet files when they exist and are from today.
     refresh : bool
         Delete all cached files before downloading (forces fresh pull).
 

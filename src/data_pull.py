@@ -2,7 +2,7 @@
 Data collection module.
 
 Pulls OHLCV data from Yahoo Finance and macro series from FRED via
-pandas-datareader (no API key required). Results are cached as parquet
+direct CSV download (no API key required). Results are cached as parquet
 files in data/raw/ so APIs are only hit once (or when refresh=True).
 """
 
@@ -12,7 +12,6 @@ from datetime import date, timedelta
 
 import pandas as pd
 import yfinance as yf
-from pandas_datareader import data as pdr
 
 from src.config import (
     ALL_SYMBOLS,
@@ -216,7 +215,9 @@ def fetch_fred(
 
     for sid in series:
         try:
-            s = pdr.DataReader(sid, "fred", start, end)
+            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
+            s = pd.read_csv(url, index_col=0, parse_dates=True)
+            s.columns = [sid]
             fred = fred.join(s, how="left")
         except Exception as exc:
             print(f"[data_pull] WARNING: could not fetch {sid}: {exc}")

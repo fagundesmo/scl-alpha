@@ -64,7 +64,7 @@ def _call_llm(prompt: str, provider: str, api_key: str) -> str:
     if "Gemini" in provider:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         resp = model.generate_content(prompt)
         return resp.text
     else:

@@ -1,4 +1,4 @@
-"""Predictions: signal analysis, time-series plots, and simple strategy simulation."""
+"""Predictions: signal analysis, time-series plots, simple strategy simulation, and AI Tutor."""
 
 from __future__ import annotations
 
@@ -14,6 +14,125 @@ st.caption(
     "Explore model predictions over time, signal quality, and a simple long/short strategy simulation. "
     "Run **Sandbox Models** first to populate this page."
 )
+
+# -----------------------------------------------------------------------
+# Sidebar: AI Tutor API key setup
+# -----------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### 🤖 AI Tutor Setup")
+    st.caption(
+        "Get a **free** API key and let an LLM explain your results in plain English.  \n"
+        "Choose one provider:"
+    )
+
+    ai_provider = st.radio(
+        "LLM provider",
+        options=["Gemini Flash (Google)", "Groq / Llama 3 (Meta)"],
+        index=0,
+        help=(
+            "Gemini Flash: free at aistudio.google.com — 1,500 req/day.  \n"
+            "Groq: free at console.groq.com — very fast Llama 3."
+        ),
+    )
+
+    ai_api_key = st.text_input(
+        "Paste your free API key here",
+        type="password",
+        placeholder="AIza... or gsk_...",
+        help=(
+            "Gemini: get key at https://aistudio.google.com/app/apikey  \n"
+            "Groq: get key at https://console.groq.com"
+        ),
+    )
+
+    # Also check Streamlit secrets as fallback (for instructor deployment)
+    if not ai_api_key:
+        if "GEMINI_API_KEY" in st.secrets and "Gemini" in ai_provider:
+            ai_api_key = st.secrets["GEMINI_API_KEY"]
+        elif "GROQ_API_KEY" in st.secrets and "Groq" in ai_provider:
+            ai_api_key = st.secrets["GROQ_API_KEY"]
+
+    st.divider()
+
+
+# -----------------------------------------------------------------------
+# AI Tutor helper
+# -----------------------------------------------------------------------
+
+def _call_llm(prompt: str, provider: str, api_key: str) -> str:
+    """Call Gemini or Groq and return the text response."""
+    if "Gemini" in provider:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        resp = model.generate_content(prompt)
+        return resp.text
+    else:
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        chat = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+        )
+        return chat.choices[0].message.content
+
+
+def _build_tutor_prompt(model_label: str, res: dict, ticker_metrics: list[dict]) -> str:
+    """Build a structured prompt from model results for an undergrad audience."""
+    tm = res.get("test_metrics", {})
+    vm = res.get("val_metrics", {})
+    tr = res.get("train_metrics", {})
+
+    ticker_summary = "\n".join(
+        f"  - {r['Ticker']}: IC={r['IC']:.3f}, Hit Rate={r['Hit Rate']:.1%}, Pred Sharpe={r['Pred Sharpe']:.2f}"
+        for r in sorted(ticker_metrics, key=lambda x: -x["IC"])[:8]
+    ) if ticker_metrics else "  (not available)"
+
+    return f"""
+You are a teaching assistant for an undergraduate finance course on machine learning in trading.
+A student just ran a {model_label} model to predict next-day stock returns for supply-chain companies.
+Explain the results below in plain English — no jargon, use analogies, keep it engaging.
+Structure your response with these sections:
+
+1. **What the model learned** (2-3 sentences — what is it trying to do?)
+2. **Is the signal any good?** (explain IC, Hit Rate, Pred Sharpe in plain terms with the actual numbers)
+3. **How does it do by stock?** (highlight the best and worst tickers from the per-ticker table)
+4. **Training vs Validation vs Test — what do the gaps tell us?** (overfitting? generalisation?)
+5. **What this means for trading** (can you actually use this? what would you need to be careful about?)
+6. **One key takeaway** (1 sentence the student should remember)
+
+Here are the actual results:
+
+MODEL: {model_label}
+
+Test set metrics (2026 — true out-of-sample):
+  - MAE: {tm.get('MAE', float('nan')):.4f}
+  - RMSE: {tm.get('RMSE', float('nan')):.4f}
+  - IC (Spearman): {tm.get('IC', float('nan')):.3f}
+  - Hit Rate: {tm.get('Hit Rate', float('nan')):.1%}
+  - Pred Sharpe: {tm.get('Pred Sharpe', float('nan')):.2f}
+
+Validation set metrics (2025):
+  - IC: {vm.get('IC', float('nan')):.3f}, Hit Rate: {vm.get('Hit Rate', float('nan')):.1%}, Pred Sharpe: {vm.get('Pred Sharpe', float('nan')):.2f}
+
+Training set metrics (2018–2024):
+  - IC: {tr.get('IC', float('nan')):.3f}, Hit Rate: {tr.get('Hit Rate', float('nan')):.1%}, Pred Sharpe: {tr.get('Pred Sharpe', float('nan')):.2f}
+
+Split sizes: Train={res.get('train_size',0):,} rows | Val={res.get('val_size',0):,} | Test={res.get('test_size',0):,}
+Test date range: {res.get('test_date_range', 'N/A')}
+
+Per-ticker IC on test set (top/bottom performers):
+{ticker_summary}
+
+Context clues:
+- IC > 0.05 is considered meaningful in practice; IC > 0.10 is strong.
+- Hit Rate > 52% is useful if you trade at scale; 50% = pure luck.
+- Pred Sharpe > 0.5 annualised is respectable for a daily signal.
+- These are real supply-chain/logistics stocks (UPS, FDX, JBHT, etc.).
+- The target variable is the next-day log return (so tiny numbers like 0.003 = +0.3% return).
+
+Keep the explanation under 500 words, friendly, and educational.
+""".strip()
 
 # -----------------------------------------------------------------------
 # Guard
@@ -206,12 +325,12 @@ st.caption(
     "Shows which companies the model predicts best."
 )
 
+ticker_metrics: list[dict] = []
+
 if test_preds.empty:
     st.info("No test-set predictions available.")
 else:
     from scipy import stats as scipy_stats2
-
-    ticker_metrics = []
     for t in sorted(test_preds["Ticker"].unique()):
         sub = test_preds[test_preds["Ticker"] == t]
         if len(sub) < 5:
@@ -240,9 +359,56 @@ else:
     )
 
 # -----------------------------------------------------------------------
-# Section 4: Long / Short strategy simulation (test set)
+# Section 4 · AI Tutor — explain results in plain English
 # -----------------------------------------------------------------------
-st.header("4 · Long / Short Strategy Simulation — Test Set")
+st.header("4 · AI Tutor — Explain My Results")
+st.caption(
+    "Paste a free API key in the sidebar, then click the button below. "
+    "The AI will read your actual numbers and explain what they mean in plain English."
+)
+
+if not ai_api_key:
+    st.info(
+        "No API key found. Get a **free** key from one of these:  \n"
+        "• **Gemini Flash (recommended):** https://aistudio.google.com/app/apikey — 1,500 free calls/day  \n"
+        "• **Groq / Llama 3:** https://console.groq.com — also free, very fast  \n\n"
+        "Paste it in the **AI Tutor Setup** panel in the sidebar.",
+        icon="🔑",
+    )
+else:
+    if st.button("Explain my results with AI", type="primary", use_container_width=True):
+        prompt = _build_tutor_prompt(
+            model_label=MODEL_LABELS.get(model_choice, model_choice),
+            res=res,
+            ticker_metrics=ticker_metrics,
+        )
+        with st.spinner("Thinking..."):
+            try:
+                explanation = _call_llm(prompt, ai_provider, ai_api_key)
+                st.session_state["ai_explanation"] = explanation
+            except Exception as e:
+                st.error(f"LLM call failed: {e}")
+
+    explanation = st.session_state.get("ai_explanation")
+    if explanation:
+        st.markdown("---")
+        st.markdown(explanation)
+        st.markdown("---")
+        st.caption(
+            "Generated by AI based on your actual model results. "
+            "Always verify key numbers against the tables above."
+        )
+        st.download_button(
+            label="Download explanation as text",
+            data=explanation.encode("utf-8"),
+            file_name=f"{model_choice}_ai_explanation.txt",
+            mime="text/plain",
+        )
+
+# -----------------------------------------------------------------------
+# Section 5: Long / Short strategy simulation (test set)
+# -----------------------------------------------------------------------
+st.header("5 · Long / Short Strategy Simulation — Test Set")
 st.caption(
     "Each day, rank all tickers by predicted return. Go **long** the top-K and **short** the bottom-K "
     "(equal weight within each leg). Portfolio daily return = avg(long actual) − avg(short actual). "
@@ -335,9 +501,9 @@ else:
     )
 
 # -----------------------------------------------------------------------
-# Section 5: Download all predictions
+# Section 6: Download all predictions
 # -----------------------------------------------------------------------
-st.header("5 · Download Predictions")
+st.header("6 · Download Predictions")
 
 col1, col2 = st.columns(2)
 with col1:

@@ -27,21 +27,22 @@ with st.sidebar:
 
     ai_provider = st.radio(
         "LLM provider",
-        options=["Gemini Flash (Google)", "Groq / Llama 3 (Meta)"],
+        options=["Groq / Llama 3 (Meta)", "Gemini Flash (Google)"],
         index=0,
         help=(
-            "Gemini Flash: free at aistudio.google.com — 1,500 req/day.  \n"
-            "Groq: free at console.groq.com — very fast Llama 3."
+            "Groq: free at console.groq.com — no billing needed, very fast.  \n"
+            "Gemini Flash: free at aistudio.google.com — key must be from AI Studio (not Google Cloud Console)."
         ),
     )
 
     ai_api_key = st.text_input(
         "Paste your free API key here",
         type="password",
-        placeholder="AIza... or gsk_...",
+        placeholder="gsk_... (Groq) or AIza... (Gemini)",
         help=(
+            "Groq (recommended): get key at https://console.groq.com  \n"
             "Gemini: get key at https://aistudio.google.com/app/apikey  \n"
-            "Groq: get key at https://console.groq.com"
+            "⚠️ Gemini keys from Google Cloud Console won't work — use AI Studio."
         ),
     )
 
@@ -60,14 +61,8 @@ with st.sidebar:
 # -----------------------------------------------------------------------
 
 def _call_llm(prompt: str, provider: str, api_key: str) -> str:
-    """Call Gemini or Groq and return the text response."""
-    if "Gemini" in provider:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        resp = model.generate_content(prompt)
-        return resp.text
-    else:
+    """Call Groq or Gemini and return the text response."""
+    if "Groq" in provider:
         from groq import Groq
         client = Groq(api_key=api_key)
         chat = client.chat.completions.create(
@@ -75,6 +70,14 @@ def _call_llm(prompt: str, provider: str, api_key: str) -> str:
             model="llama-3.3-70b-versatile",
         )
         return chat.choices[0].message.content
+    else:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        resp = client.models.generate_content(
+            model="gemini-2.0-flash-lite",
+            contents=prompt,
+        )
+        return resp.text
 
 
 def _build_tutor_prompt(model_label: str, res: dict, ticker_metrics: list[dict]) -> str:
@@ -369,10 +372,11 @@ st.caption(
 
 if not ai_api_key:
     st.info(
-        "No API key found. Get a **free** key from one of these:  \n"
-        "• **Gemini Flash (recommended):** https://aistudio.google.com/app/apikey — 1,500 free calls/day  \n"
-        "• **Groq / Llama 3:** https://console.groq.com — also free, very fast  \n\n"
-        "Paste it in the **AI Tutor Setup** panel in the sidebar.",
+        "No API key found. Get a **free** key — no credit card needed:  \n\n"
+        "• **Groq (easiest):** go to https://console.groq.com → sign up → API Keys → Create  \n"
+        "• **Gemini Flash:** go to https://aistudio.google.com/app/apikey → Get API key  \n"
+        "  _(must use AI Studio, not Google Cloud Console)_  \n\n"
+        "Paste the key in the **AI Tutor Setup** panel in the sidebar.",
         icon="🔑",
     )
 else:

@@ -54,9 +54,15 @@ tickers = sorted(all_preds["Ticker"].unique())
 # Section 1: Predicted vs actual time series (per ticker)
 # -----------------------------------------------------------------------
 st.header("1 · Predicted vs Actual Returns Over Time")
-st.caption(
-    "Shows predicted and realized next-day log return for the selected ticker across all splits. "
-    "Closer alignment in the test region (2026) = better out-of-sample fit."
+
+st.info(
+    "**Why does the prediction look flat?**  \n"
+    "Next-day returns are near-random noise — even top quant models predict magnitudes of 0.001–0.005, "
+    "while actual daily moves can be ±5–15% on news days. The model is being honest about uncertainty. "
+    "**What matters is the sign (direction), not the magnitude.** "
+    "A 53% hit rate on direction is genuinely valuable in practice.  \n"
+    "The chart below normalises both series to the same scale so you can see direction agreement.",
+    icon="ℹ️",
 )
 
 ticker_choice = st.selectbox("Select ticker", options=tickers, key="pred_ts_ticker")
@@ -74,17 +80,26 @@ ts_df = all_preds[
 if ts_df.empty:
     st.info("No data for this selection.")
 else:
+    # ---- Panel A: z-score normalised so both series are on the same scale ----
+    def _zscore(s: pd.Series) -> pd.Series:
+        std = s.std()
+        return (s - s.mean()) / std if std > 0 else s * 0
+
+    ts_plot = ts_df.copy()
+    ts_plot["actual_z"]    = _zscore(ts_plot["y_true"])
+    ts_plot["predicted_z"] = _zscore(ts_plot["y_pred"])
+
+    test_min = all_preds.loc[all_preds["split"] == "test", "Date"].min()
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=ts_df["Date"], y=ts_df["y_true"],
-        name="Actual return", line=dict(color="#1f77b4", width=1.5), opacity=0.8,
+        x=ts_plot["Date"], y=ts_plot["actual_z"],
+        name="Actual return (z-scored)", line=dict(color="#1f77b4", width=1.2), opacity=0.7,
     ))
     fig.add_trace(go.Scatter(
-        x=ts_df["Date"], y=ts_df["y_pred"],
-        name="Predicted return", line=dict(color="#ff7f0e", width=1.5, dash="dot"), opacity=0.9,
+        x=ts_plot["Date"], y=ts_plot["predicted_z"],
+        name="Predicted return (z-scored)", line=dict(color="#ff7f0e", width=2), opacity=0.9,
     ))
-    # shade test region
-    test_min = all_preds.loc[all_preds["split"] == "test", "Date"].min()
     if pd.notna(test_min):
         fig.add_vrect(
             x0=test_min, x1=all_preds["Date"].max(),
@@ -92,11 +107,33 @@ else:
             annotation_text="Test (2026)", annotation_position="top left",
         )
     fig.update_layout(
-        title=f"Predicted vs Actual Next-Day Log Return — {ticker_choice}",
-        xaxis_title="Date", yaxis_title="Log Return",
-        height=440, hovermode="x unified",
+        title=f"Signal Direction — Normalised Predicted vs Actual — {ticker_choice}",
+        xaxis_title="Date", yaxis_title="Z-score (same scale)",
+        height=380, hovermode="x unified",
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    # ---- Panel B: correct-direction highlighting ----
+    st.caption("**Direction correctness** — green bar = model predicted the correct sign (up/down) that day.")
+    ts_plot["correct"] = np.sign(ts_plot["y_pred"]) == np.sign(ts_plot["y_true"])
+    ts_plot["bar_color"] = ts_plot["correct"].map({True: "Correct", False: "Wrong"})
+
+    fig2 = px.bar(
+        ts_plot, x="Date", y="y_true",
+        color="bar_color",
+        color_discrete_map={"Correct": "#2ca02c", "Wrong": "#d62728"},
+        labels={"y_true": "Actual return", "bar_color": "Direction"},
+        title=f"Actual Daily Return — Coloured by Prediction Direction Accuracy — {ticker_choice}",
+    )
+    fig2.update_layout(height=300, hovermode="x unified", bargap=0)
+    st.plotly_chart(fig2, use_container_width=True)
+
+    hit = ts_plot["correct"].mean()
+    st.caption(
+        f"Hit rate for selected period: **{hit:.1%}** "
+        f"({'above' if hit > 0.50 else 'below'} the 50% random baseline). "
+        f"Days shown: {len(ts_plot):,}."
+    )
 
 # -----------------------------------------------------------------------
 # Section 2: Rolling 21-day IC (signal consistency)

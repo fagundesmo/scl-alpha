@@ -72,6 +72,10 @@ ALL_SYMBOLS = TICKERS + [BENCHMARK_ETF, MARKET_ETF]
 # ---------------------------------------------------------------------------
 DATA_START = "2018-01-01"
 
+# Time-series split cutoffs (used by model_runner)
+TRAIN_CUTOFF = "2025-01-01"   # train < this date
+TEST_CUTOFF  = "2026-01-01"   # test  >= this date  (val = between the two)
+
 # ---------------------------------------------------------------------------
 # FRED Series
 # ---------------------------------------------------------------------------

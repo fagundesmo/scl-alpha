@@ -41,6 +41,20 @@ def hit_rate(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.mean(correct))
 
 
+def prediction_sharpe(y_true: np.ndarray, y_pred: np.ndarray, periods_per_year: float = 252.0) -> float:
+    """
+    Annualised Sharpe of a pure long/short strategy driven by predicted sign.
+    Each period: strategy return = sign(y_pred) * y_true  (log return).
+    """
+    if len(y_true) < 5:
+        return np.nan
+    strategy = np.sign(y_pred) * y_true
+    std = strategy.std()
+    if std == 0:
+        return np.nan
+    return float(strategy.mean() / std * np.sqrt(periods_per_year))
+
+
 def compute_ml_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     """Compute all ML metrics and return as a dict."""
     return {
@@ -48,6 +62,7 @@ def compute_ml_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, floa
         "RMSE": rmse(y_true, y_pred),
         "IC": information_coefficient(y_true, y_pred),
         "Hit Rate": hit_rate(y_true, y_pred),
+        "Pred Sharpe": prediction_sharpe(y_true, y_pred),
     }
 
 

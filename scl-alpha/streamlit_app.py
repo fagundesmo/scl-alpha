@@ -16,6 +16,7 @@ navigation = st.navigation(
         st.Page(str(ROOT / "app" / "app.py"), title="Home", icon="🏠"),
         st.Page(str(ROOT / "app" / "pages" / "pre_data.py"), title="Pre-data", icon="📥"),
         st.Page(str(ROOT / "app" / "pages" / "sandbox_models.py"), title="Sandbox Models", icon="🧪"),
+        st.Page(str(ROOT / "app" / "pages" / "predictions.py"), title="Predictions", icon="🔮"),
         st.Page(str(ROOT / "app" / "pages" / "output.py"), title="Output", icon="📊"),
     ],
     position="sidebar",

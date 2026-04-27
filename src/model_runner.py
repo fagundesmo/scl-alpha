@@ -14,7 +14,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
-from src.config import TARGET_COL
+from src.config import TARGET_COL, TRAIN_CUTOFF, TEST_CUTOFF
 from src.metrics import compute_ml_metrics
 
 
@@ -36,25 +36,41 @@ def time_split(
     df: pd.DataFrame,
     val_frac: float = 0.20,
     test_frac: float = 0.20,
+    train_end: str | None = None,
+    test_start: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Split a features DataFrame into train / validation / test by date.
 
-    The split is date-ordered: all rows for early dates go to train,
-    middle dates to val, later dates to test. This prevents data leakage
-    across the time series.
+    When train_end and test_start are provided (recommended), uses hard date
+    cutoffs: train < train_end, val = [train_end, test_start), test >= test_start.
+    Otherwise falls back to fraction-based split using val_frac and test_frac.
     """
-    dates = pd.to_datetime(df["Date"]).sort_values().unique()
-    n = len(dates)
-    i_val = int(n * (1 - val_frac - test_frac))
-    i_test = int(n * (1 - test_frac))
-
     d = pd.to_datetime(df["Date"])
+
+    if train_end is not None and test_start is not None:
+        train = df[d < train_end].copy()
+        val   = df[(d >= train_end) & (d < test_start)].copy()
+        test  = df[d >= test_start].copy()
+        return train, val, test
+
+    # Fraction-based fallback
+    dates = d.sort_values().unique()
+    n = len(dates)
+    i_val  = int(n * (1 - val_frac - test_frac))
+    i_test = int(n * (1 - test_frac))
     return (
         df[d.isin(dates[:i_val])].copy(),
         df[d.isin(dates[i_val:i_test])].copy(),
         df[d.isin(dates[i_test:])].copy(),
     )
+
+
+def _date_range_str(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "empty"
+    d = pd.to_datetime(df["Date"])
+    return f"{d.min().date()} → {d.max().date()}"
 
 
 # ============================================================
@@ -67,6 +83,9 @@ def run_model(
     model_params: dict,
     val_frac: float = 0.20,
     test_frac: float = 0.20,
+    use_year_split: bool = True,
+    train_end: str = TRAIN_CUTOFF,
+    test_start: str = TEST_CUTOFF,
 ) -> dict:
     """
     Train and evaluate one model on the feature matrix.
@@ -79,34 +98,43 @@ def run_model(
         One of 'ridge', 'random_forest', 'xgboost'.
     model_params : dict
         Model hyperparameters (override defaults).
-    val_frac, test_frac : float
-        Fraction of unique dates allocated to validation and test.
+    use_year_split : bool
+        If True, use train_end/test_start date cutoffs (recommended).
+        If False, fall back to val_frac/test_frac.
+    train_end, test_start : str
+        ISO date strings for the date-based split boundaries.
 
     Returns
     -------
     dict with keys:
         model_name, model_params, feature_cols,
         train_metrics, val_metrics, test_metrics,
-        feature_importance, test_predictions,
-        train_size, val_size, test_size
+        feature_importance, coef_table,
+        test_predictions, all_predictions,
+        train_size, val_size, test_size,
+        train_date_range, val_date_range, test_date_range
     """
     cols = _feature_cols(features)
-    train, val, test = time_split(features, val_frac, test_frac)
+
+    if use_year_split:
+        train, val, test = time_split(features, train_end=train_end, test_start=test_start)
+    else:
+        train, val, test = time_split(features, val_frac=val_frac, test_frac=test_frac)
 
     # Impute with training-set medians (prevents leakage into val/test)
     medians = train[cols].median()
 
     X_train = train[cols].fillna(medians).values.astype(float)
     y_train = train[TARGET_COL].values.astype(float)
-    X_val = val[cols].fillna(medians).values.astype(float)
-    y_val = val[TARGET_COL].values.astype(float)
-    X_test = test[cols].fillna(medians).values.astype(float)
-    y_test = test[TARGET_COL].values.astype(float)
+    X_val   = val[cols].fillna(medians).values.astype(float)
+    y_val   = val[TARGET_COL].values.astype(float)
+    X_test  = test[cols].fillna(medians).values.astype(float)
+    y_test  = test[TARGET_COL].values.astype(float)
 
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
-    X_val = scaler.transform(X_val)
-    X_test = scaler.transform(X_test)
+    X_val   = scaler.transform(X_val)
+    X_test  = scaler.transform(X_test)
 
     if model_name == "ridge":
         reg = Ridge(alpha=float(model_params.get("alpha", 1.0)))
@@ -140,11 +168,7 @@ def run_model(
             verbosity=0,
         )
         if len(y_val) > 0:
-            reg.fit(
-                X_train, y_train,
-                eval_set=[(X_val, y_val)],
-                verbose=False,
-            )
+            reg.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
         else:
             reg.fit(X_train, y_train)
 
@@ -157,34 +181,67 @@ def run_model(
     def _metrics(X: np.ndarray, y: np.ndarray) -> dict:
         return compute_ml_metrics(y, reg.predict(X)) if len(y) > 0 else {}
 
-    # Feature importance
+    # ---------------------------------------------------------------
+    # Feature importance (abs) and signed coefficients for Ridge
+    # ---------------------------------------------------------------
+    coef_table = None
+
     if hasattr(reg, "feature_importances_"):
         imp = pd.DataFrame(
             {"feature": cols, "importance": reg.feature_importances_}
         ).sort_values("importance", ascending=False).reset_index(drop=True)
+
     elif hasattr(reg, "coef_"):
-        imp = pd.DataFrame(
-            {"feature": cols, "importance": np.abs(reg.coef_)}
-        ).sort_values("importance", ascending=False).reset_index(drop=True)
+        coef_table = pd.DataFrame({
+            "feature": cols,
+            "coefficient": reg.coef_,
+            "abs_coefficient": np.abs(reg.coef_),
+        }).sort_values("abs_coefficient", ascending=False).reset_index(drop=True)
+
+        imp = coef_table[["feature", "abs_coefficient"]].rename(
+            columns={"abs_coefficient": "importance"}
+        ).copy()
     else:
         imp = pd.DataFrame(columns=["feature", "importance"])
 
-    # Test-set predictions
-    test_preds = test[["Date", "Ticker"]].copy().reset_index(drop=True)
-    test_preds["y_true"] = y_test
-    test_preds["y_pred"] = reg.predict(X_test)
-    test_preds["residual"] = test_preds["y_true"] - test_preds["y_pred"]
+    # ---------------------------------------------------------------
+    # Predictions for all splits (train + val + test)
+    # ---------------------------------------------------------------
+    all_preds_parts = []
+    for split_name, split_df, X_split, y_split in [
+        ("train", train, X_train, y_train),
+        ("val",   val,   X_val,   y_val),
+        ("test",  test,  X_test,  y_test),
+    ]:
+        if len(y_split) == 0:
+            continue
+        part = split_df[["Date", "Ticker"]].copy().reset_index(drop=True)
+        part["y_true"]  = y_split
+        part["y_pred"]  = reg.predict(X_split)
+        part["residual"] = part["y_true"] - part["y_pred"]
+        part["split"]   = split_name
+        all_preds_parts.append(part)
+
+    all_predictions = pd.concat(all_preds_parts, ignore_index=True) if all_preds_parts else pd.DataFrame()
+
+    # Test-only predictions (used by sandbox_models display)
+    test_preds = all_predictions[all_predictions["split"] == "test"].drop(columns=["split"]).copy()
 
     return {
-        "model_name": model_name,
-        "model_params": model_params,
-        "feature_cols": cols,
-        "train_metrics": _metrics(X_train, y_train),
-        "val_metrics": _metrics(X_val, y_val),
-        "test_metrics": _metrics(X_test, y_test),
+        "model_name":       model_name,
+        "model_params":     model_params,
+        "feature_cols":     cols,
+        "train_metrics":    _metrics(X_train, y_train),
+        "val_metrics":      _metrics(X_val,   y_val),
+        "test_metrics":     _metrics(X_test,  y_test),
         "feature_importance": imp,
+        "coef_table":       coef_table,
         "test_predictions": test_preds,
-        "train_size": len(X_train),
-        "val_size": len(X_val),
-        "test_size": len(X_test),
+        "all_predictions":  all_predictions,
+        "train_size":       len(X_train),
+        "val_size":         len(X_val),
+        "test_size":        len(X_test),
+        "train_date_range": _date_range_str(train),
+        "val_date_range":   _date_range_str(val),
+        "test_date_range":  _date_range_str(test),
     }
